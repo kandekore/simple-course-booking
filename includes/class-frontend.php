@@ -7,7 +7,7 @@ if (!defined('ABSPATH')) exit;
 class SCB_Frontend {
 
     public function __construct() {
-        add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
+add_action('wp_enqueue_scripts', [$this, 'enqueue_assets'], 20);
         add_action('woocommerce_before_add_to_cart_button', [$this, 'render_booking_ui']);
 
         add_filter('woocommerce_add_to_cart_validation', [$this, 'validate_add_to_cart'], 10, 3);
@@ -25,20 +25,37 @@ class SCB_Frontend {
         $slots = get_post_meta($post->ID, '_scb_slots', true);
         if (empty($slots)) return; // Only load if booking product
 
-        wp_enqueue_style('scb-style', SCB_URL . 'assets/css/style.css');
-        wp_enqueue_script('scb-booking', SCB_URL . 'assets/js/booking.js', ['jquery'], false, true);
+       wp_enqueue_style('scb-style', SCB_URL . 'assets/css/style.css');
+wp_enqueue_script('scb-booking', SCB_URL . 'assets/js/booking.js', ['jquery'], false, true);
+
+// Pass slot data to JS
+wp_localize_script('scb-booking', 'SCB_SLOTS', $slots);
+
     }
 
     /** Render the entire booking UI */
-    public function render_booking_ui() {
-        global $product;
+public function render_booking_ui() {
+    global $product;
 
-        $slots = get_post_meta($product->get_id(), '_scb_slots', true);
-        if (empty($slots)) return; // Not a booking product
+    $slots = get_post_meta($product->get_id(), '_scb_slots', true);
+    if (empty($slots)) return;
 
-        // Filter out full slots
-        $slots = array_filter($slots, function($s){ return ($s['capacity'] - $s['booked']) > 0; });
-        if (empty($slots)) { echo '<p><strong>All sessions are booked.</strong></p>'; return; }
+    // Filter out full slots
+    $slots = array_filter($slots, function($s){
+        return ($s['capacity'] - $s['booked']) > 0;
+    });
+
+    // Reindex array so JS can use numeric keys
+    $slots = array_values($slots);
+
+    if (empty($slots)) {
+        echo '<p><strong>All sessions are booked.</strong></p>';
+        return;
+    }
+
+    // Make filtered slots available to JS
+    wp_localize_script('scb-booking', 'SCB_SLOTS', $slots);
+
         ?>
 
         <div id="scb-booking-wrapper">
@@ -76,6 +93,11 @@ class SCB_Frontend {
         </div>
 
         <?php
+          wp_print_script_tag([
+        'id' => 'scb-slots-data',
+        'type' => 'text/javascript',
+        'data' => 'window.SCB_SLOTS = ' . wp_json_encode($slots) . ';'
+    ]);
         // Hide the default add-to-cart button
         echo '<style>.quantity, .cart .single_add_to_cart_button { display:none !important; }</style>';
     }
