@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Simple Course Booking
  * Description: Custom booking plugin with slots, attendees, and Zoom delivery.
- * Version: 1.1.3   
+ * Version: 1.2.0   
  * Author: D Kandekore  
  */
 
