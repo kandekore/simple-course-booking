@@ -8,6 +8,7 @@ class SCB_Admin {
 
     public function __construct() {
         add_action('admin_menu', [$this, 'add_menu']);
+        add_action('admin_post_scb_export_csv', [$this, 'export_csv']);
     }
 
     /** Add admin menu under WooCommerce */

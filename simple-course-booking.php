@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Simple Course Booking
- * Description: Custom booking plugin with slots, attendees, and Zoom delivery.
- * Version: 1.1.3   
+ * Description: Custom booking plugin with slots, attendees, and Zoom/Teams delivery.
+ * Version: 2.0.0  
  * Author: D Kandekore  
  */
 

@@ -219,6 +219,13 @@ class SCB_Frontend {
         }
         $slot = $slots[$slot_id];
 
+        if (!empty($slot['zoom'])) {
+    if (!isset($_POST['scb_email_send'])) {
+        wc_add_notice('Please choose how joining instructions should be delivered.', 'error');
+        return false;
+    }
+}
+
         $capacity = intval($slot['capacity']);
         $booked   = isset($slot['booked']) ? intval($slot['booked']) : 0;
         $remaining = $capacity - $booked;
@@ -265,35 +272,69 @@ class SCB_Frontend {
 
 
     /** Display booking meta in cart */
-    public function display_cart_item_data($item_data, $cart_item) {
+public function display_cart_item_data($item_data, $cart_item) {
+    if (!isset($cart_item['scb_slot'])) return $item_data;
 
-        if (!isset($cart_item['scb_slot'])) return $item_data;
-
-        $slots = get_post_meta($cart_item['product_id'], '_scb_slots', true);
-        
-        // Ensure slot exists
-        if (isset($slots[$cart_item['scb_slot']])) {
-            $slot = $slots[$cart_item['scb_slot']];
-            $item_data[] = [
-                'name' => 'Session',
-                'value' => date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']
-            ];
-        }
-
-        $html = '';
-        if (!empty($cart_item['scb_attendees'])) {
-            foreach ($cart_item['scb_attendees'] as $a) {
-                $html .= esc_html($a['name'] . ' (' . $a['email'] . ')') . '<br>';
-            }
-        }
-
+    $slots = get_post_meta($cart_item['product_id'], '_scb_slots', true);
+    
+    if (isset($slots[$cart_item['scb_slot']])) {
+        $slot = $slots[$cart_item['scb_slot']];
         $item_data[] = [
-            'name' => 'Attendees',
-            'value' => $html
+            'name' => 'Session',
+            'value' => date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']
         ];
-
-        return $item_data;
     }
+
+    $count = intval($cart_item['scb_attendee_count']);
+    $html = '';
+    if (!empty($cart_item['scb_attendees'])) {
+        foreach ($cart_item['scb_attendees'] as $a) {
+            $html .= esc_html($a['name'] . ' (' . $a['email'] . ')') . '<br>';
+        }
+    }
+
+    // New: Added parentheses with attendee count per your request
+    $item_data[] = [
+        'name' => '(' . $count . ') Attendees',
+        'value' => $html
+    ];
+
+    return $item_data;
+}
+
+/** Update the validate_add_to_cart function to remove the redundant general check **/
+public function validate_add_to_cart($passed, $product_id, $qty) {
+    if (!isset($_POST['add-to-cart']) || intval($_POST['add-to-cart']) !== $product_id) return $passed;
+
+    $slots = get_post_meta($product_id, '_scb_slots', true);
+    if (empty($slots)) return $passed;
+
+    if (!isset($_POST['scb_slot'])) {
+        wc_add_notice('Please select a session.', 'error');
+        return false;
+    }
+
+    $slot_id = $_POST['scb_slot'];
+    $slot = $slots[$slot_id];
+
+    if (empty($_POST['scb_attendee_count'])) {
+        wc_add_notice('Please select number of attendees.', 'error');
+        return false;
+    }
+
+    if (empty($_POST['scb_attendees'])) {
+        wc_add_notice('Please fill in attendee details.', 'error');
+        return false;
+    }
+
+    // UPDATED: Only require this field if a zoom link actually exists
+    if (!empty($slot['zoom']) && !isset($_POST['scb_email_send'])) {
+        wc_add_notice('Please choose how instructions should be delivered.', 'error');
+        return false;
+    }
+
+    return true;
+}
 
 
 
@@ -311,19 +352,27 @@ class SCB_Frontend {
 
     /** Save booking metadata to order */
     public function add_order_item_meta($item, $cart_item_key, $values, $order) {
+if (!isset($values['scb_slot'])) return;
 
-        if (!isset($values['scb_slot'])) return;
+    $product_id = $item->get_product_id();
+    $slots = get_post_meta($product_id, '_scb_slots', true);
+    $slot  = $slots[$values['scb_slot']];
+    
+    // Get the product-wide extra info
+    $extra_info = get_post_meta($product_id, '_scb_extra_info', true);
 
-        $slots = get_post_meta($item->get_product_id(), '_scb_slots', true);
-        $slot  = $slots[$values['scb_slot']];
+    $item->add_meta_data('_scb_slot_id', $values['scb_slot']);
+    $item->add_meta_data('_scb_count', intval($values['scb_attendee_count']));
+    
+    $item->add_meta_data('Session', date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']);
+    $item->add_meta_data('Zoom Link', $slot['zoom']);
+    
+    // Add new fields to order meta
+    $item->add_meta_data('Meeting ID', $slot['meeting_id'] ?? '');
+    $item->add_meta_data('Password', $slot['password'] ?? '');
+    $item->add_meta_data('Extra Info', $extra_info); // Added here
 
-        $item->add_meta_data('_scb_slot_id', $values['scb_slot']);
-        $item->add_meta_data('_scb_count', intval($values['scb_attendee_count']));
-        
-        $item->add_meta_data('Session', date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']);
-        $item->add_meta_data('Zoom Link', $slot['zoom']);
-        $item->add_meta_data('Email Mode', $values['scb_email_send']);
-
+    $item->add_meta_data('Email Mode', $values['scb_email_send']);
         $attendees = [];
         foreach ($values['scb_attendees'] as $a) {
             $attendees[] = $a['name'] . ' <' . $a['email'] . '>';
