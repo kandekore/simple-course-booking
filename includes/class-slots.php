@@ -41,7 +41,7 @@ class SCB_Slots {
                     <th>Time</th>
                     <th>Duration (mins)</th>
                     <th>Capacity</th>
-                    <th>Zoom Link</th>
+                    <th>Teams Link</th>
                     <th>Remove</th>
                 </tr>
             </thead>

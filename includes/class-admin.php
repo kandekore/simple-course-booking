@@ -44,7 +44,10 @@ class SCB_Admin {
             if (empty($slots)) continue; // Only products with booking slots
 
             foreach ($slots as $i => $slot) {
-                $remaining = $slot['capacity'] - $slot['booked'];
+                // Ensure booked is set
+                $booked = isset($slot['booked']) ? intval($slot['booked']) : 0;
+                $remaining = $slot['capacity'] - $booked;
+                
                 $view_url = admin_url('admin.php?page=scb-bookings&view=slot&product=' . $p->get_id() . '&slot=' . $i);
 
                 echo '<tr>';
@@ -52,7 +55,7 @@ class SCB_Admin {
                 echo '<td>' . esc_html($slot['date']) . '</td>';
                 echo '<td>' . esc_html($slot['time']) . '</td>';
                 echo '<td>' . intval($slot['capacity']) . '</td>';
-                echo '<td>' . intval($slot['booked']) . '</td>';
+                echo '<td>' . $booked . '</td>';
                 echo '<td>' . intval($remaining) . '</td>';
                 echo '<td><a class="button" href="' . $view_url . '">View Attendees</a></td>';
                 echo '</tr>';
@@ -78,8 +81,20 @@ class SCB_Admin {
         $slots = get_post_meta($product_id, '_scb_slots', true);
         $slot = $slots[$slot_id];
 
+        // [NEW] Calculate Stats for this view
+        $booked = isset($slot['booked']) ? intval($slot['booked']) : 0;
+        $capacity = intval($slot['capacity']);
+        $remaining = $capacity - $booked;
+
         echo '<h2>Attendees for: ' . esc_html($product->get_name()) . '</h2>';
         echo '<h3>' . esc_html($slot['date'] . ' @ ' . $slot['time']) . '</h3>';
+
+        // [NEW] Display Stats
+        echo '<div style="background:#fff; padding:15px; border:1px solid #ccd0d4; margin-bottom:20px; max-width:600px;">
+                <span style="margin-right:20px;"><strong>Capacity:</strong> ' . $capacity . '</span>
+                <span style="margin-right:20px;"><strong>Booked:</strong> ' . $booked . '</span>
+                <span><strong>Remaining:</strong> ' . $remaining . '</span>
+              </div>';
 
         // Gather attendees from orders
         $orders = wc_get_orders([ 'limit' => -1, 'status' => ['completed','processing'] ]);
@@ -89,7 +104,14 @@ class SCB_Admin {
         foreach ($orders as $order) {
             foreach ($order->get_items() as $item) {
                 if ($item->get_product_id() != $product_id) continue;
-                if ($item->get_meta('Session') != date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']) continue;
+                
+                // Check if this item belongs to this specific slot ID (more accurate)
+                // Fallback to Session string match for older orders
+                $item_slot_id = $item->get_meta('_scb_slot_id');
+                if ($item_slot_id !== '' && intval($item_slot_id) !== $slot_id) continue;
+                
+                // If no ID found (legacy), check date string
+                if ($item_slot_id === '' && $item->get_meta('Session') != date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']) continue;
 
                 $attendees = explode(',', $item->get_meta('Attendees'));
                 foreach ($attendees as $a) {
@@ -117,16 +139,20 @@ class SCB_Admin {
                 <th>Time</th>
               </tr></thead><tbody>';
 
-        foreach ($rows as $r) {
-            echo '<tr>';
-            echo '<td>' . esc_html($r['name']) . '</td>';
-            echo '<td>' . esc_html($r['email']) . '</td>';
-            echo '<td><a href="' . admin_url('post.php?post=' . $r['order'] . '&action=edit') . '">#' . $r['order'] . '</a></td>';
-            echo '<td>' . esc_html($r['status']) . '</td>';
-            echo '<td>' . esc_html($r['product']) . '</td>';
-            echo '<td>' . esc_html($r['date']) . '</td>';
-            echo '<td>' . esc_html($r['time']) . '</td>';
-            echo '</tr>';
+        if (empty($rows)) {
+            echo '<tr><td colspan="7">No attendees found.</td></tr>';
+        } else {
+            foreach ($rows as $r) {
+                echo '<tr>';
+                echo '<td>' . esc_html($r['name']) . '</td>';
+                echo '<td>' . esc_html($r['email']) . '</td>';
+                echo '<td><a href="' . admin_url('post.php?post=' . $r['order'] . '&action=edit') . '">#' . $r['order'] . '</a></td>';
+                echo '<td>' . esc_html($r['status']) . '</td>';
+                echo '<td>' . esc_html($r['product']) . '</td>';
+                echo '<td>' . esc_html($r['date']) . '</td>';
+                echo '<td>' . esc_html($r['time']) . '</td>';
+                echo '</tr>';
+            }
         }
 
         echo '</tbody></table>';
@@ -162,7 +188,11 @@ class SCB_Admin {
         foreach ($orders as $order) {
             foreach ($order->get_items() as $item) {
                 if ($item->get_product_id() != $product_id) continue;
-                if ($item->get_meta('Session') != date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']) continue;
+                
+                // Match slot
+                $item_slot_id = $item->get_meta('_scb_slot_id');
+                if ($item_slot_id !== '' && intval($item_slot_id) !== $slot_id) continue;
+                if ($item_slot_id === '' && $item->get_meta('Session') != date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']) continue;
 
                 $attendees = explode(',', $item->get_meta('Attendees'));
                 foreach ($attendees as $a) {
@@ -176,4 +206,3 @@ class SCB_Admin {
         exit;
     }
 }
-    

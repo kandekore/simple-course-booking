@@ -29,8 +29,52 @@ class SCB_Frontend {
 
         // Order meta
         add_action('woocommerce_checkout_create_order_line_item', [$this, 'add_order_item_meta'], 10, 4);
+        
+        // Update Capacity
+        add_action('woocommerce_order_status_completed', [$this, 'update_slot_capacity']);
+
+        // Custom Popup Hook
+        add_action('wp_footer', [$this, 'render_success_popup']);
     }
 
+    /** Increment booked count when order is completed */
+    public function update_slot_capacity($order_id) {
+        $order = wc_get_order($order_id);
+        if (!$order) return;
+
+        // Prevent double counting if status is toggled
+        if ($order->get_meta('_scb_recorded')) return;
+
+        $updated = false;
+
+        foreach ($order->get_items() as $item) {
+            $slot_id = $item->get_meta('_scb_slot_id');
+            $count   = $item->get_meta('_scb_count');
+
+            // Skip if this item isn't a booking
+            if ($slot_id === '' || empty($count)) continue;
+
+            $product_id = $item->get_product_id();
+            $slots = get_post_meta($product_id, '_scb_slots', true);
+
+            if (isset($slots[$slot_id])) {
+                // Ensure booked key exists
+                $current_booked = isset($slots[$slot_id]['booked']) ? intval($slots[$slot_id]['booked']) : 0;
+                
+                // Increment booked count
+                $slots[$slot_id]['booked'] = $current_booked + intval($count);
+
+                // Save back to database
+                update_post_meta($product_id, '_scb_slots', $slots);
+                $updated = true;
+            }
+        }
+
+        if ($updated) {
+            $order->update_meta_data('_scb_recorded', 'yes');
+            $order->save();
+        }
+    }
 
     /** Load CSS + JS only when product has slots */
     public function enqueue_assets() {
@@ -56,11 +100,12 @@ class SCB_Frontend {
 
         // Remove full slots
         $slots = array_filter($slots, function($s){
-            return ($s['capacity'] - $s['booked']) > 0;
+            $capacity = intval($s['capacity']);
+            $booked   = isset($s['booked']) ? intval($s['booked']) : 0;
+            return ($capacity - $booked) > 0;
         });
 
-        // Reindex numerically (critical)
-        $slots = array_values($slots);
+        // DO NOT reindex array values. 
 
         if (empty($slots)) {
             echo '<p><strong>All sessions are fully booked.</strong></p>';
@@ -74,11 +119,13 @@ class SCB_Frontend {
 
         <div id="scb-booking-wrapper">
 
-            <!-- STEP 1 -->
             <div class="scb-step" id="scb-step-1">
                 <h3>1. Choose a Session</h3>
                 <?php foreach ($slots as $i => $slot): 
-                    $remaining = $slot['capacity'] - $slot['booked']; ?>
+                    $capacity = intval($slot['capacity']);
+                    $booked   = isset($slot['booked']) ? intval($slot['booked']) : 0;
+                    $remaining = $capacity - $booked; 
+                    ?>
                     <label class="scb-slot-option">
                         <input type="radio" name="scb_slot" value="<?php echo esc_attr($i); ?>">
                         <?php echo esc_html(
@@ -90,7 +137,6 @@ class SCB_Frontend {
                 <?php endforeach; ?>
             </div>
 
-            <!-- STEP 2 -->
             <div class="scb-step hidden" id="scb-step-2">
                 <h3>2. Number of Attendees</h3>
                 <select id="scb-attendee-count" name="scb_attendee_count">
@@ -98,20 +144,17 @@ class SCB_Frontend {
                 </select>
             </div>
 
-            <!-- STEP 3 -->
             <div class="scb-step hidden" id="scb-step-3">
                 <h3>3. Attendee Details</h3>
                 <div id="scb-attendee-details"></div>
             </div>
 
-            <!-- STEP 4 -->
             <div class="scb-step hidden" id="scb-step-4">
-                <h3>4. How should Zoom instructions be delivered?</h3>
+                <h3>4. How should Teams instructions be delivered?</h3>
                 <label><input type="radio" name="scb_email_send" value="purchaser"> Send ONLY to purchaser</label><br>
                 <label><input type="radio" name="scb_email_send" value="all"> Send to purchaser AND attendees</label>
             </div>
 
-            <!-- STEP 5 — Add to Cart button INSIDE THE WC FORM -->
             <div class="scb-step hidden" id="scb-step-5">
                 <button type="submit"
                     name="add-to-cart"
@@ -142,6 +185,12 @@ class SCB_Frontend {
             return $passed;
         }
 
+        // Check if this product actually has booking slots
+        $slots = get_post_meta($product_id, '_scb_slots', true);
+        if (empty($slots)) {
+            return $passed;
+        }
+
         if (!isset($_POST['scb_slot'])) {
             wc_add_notice('Please select a session.', 'error');
             return false;
@@ -163,10 +212,17 @@ class SCB_Frontend {
         }
 
         // Capacity validation
-        $slots = get_post_meta($product_id, '_scb_slots', true);
-        $slot  = $slots[intval($_POST['scb_slot'])];
+        $slot_id = $_POST['scb_slot'];
+        if (!isset($slots[$slot_id])) {
+             wc_add_notice('Invalid slot selected.', 'error');
+             return false;
+        }
+        $slot = $slots[$slot_id];
 
-        $remaining = $slot['capacity'] - $slot['booked'];
+        $capacity = intval($slot['capacity']);
+        $booked   = isset($slot['booked']) ? intval($slot['booked']) : 0;
+        $remaining = $capacity - $booked;
+        
         $attendees = intval($_POST['scb_attendee_count']);
 
         if ($attendees > $remaining) {
@@ -182,9 +238,14 @@ class SCB_Frontend {
     /** Add booking fields to cart item */
     public function add_cart_item_data($cart_item_data, $product_id, $variation_id) {
 
+        // If there is no slot selected, do nothing (regular product)
+        if (!isset($_POST['scb_slot'])) {
+            return $cart_item_data;
+        }
+
         $cart_item_data['scb_slot']            = sanitize_text_field($_POST['scb_slot']);
         $cart_item_data['scb_attendee_count']  = intval($_POST['scb_attendee_count']);
-        $cart_item_data['scb_attendees']       = $_POST['scb_attendees'];
+        $cart_item_data['scb_attendees']       = isset($_POST['scb_attendees']) ? $_POST['scb_attendees'] : [];
         $cart_item_data['scb_email_send']      = sanitize_text_field($_POST['scb_email_send']);
         $cart_item_data['unique_key']          = md5(microtime());
 
@@ -209,16 +270,21 @@ class SCB_Frontend {
         if (!isset($cart_item['scb_slot'])) return $item_data;
 
         $slots = get_post_meta($cart_item['product_id'], '_scb_slots', true);
-        $slot  = $slots[$cart_item['scb_slot']];
-
-        $item_data[] = [
-            'name' => 'Session',
-            'value' => date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']
-        ];
+        
+        // Ensure slot exists
+        if (isset($slots[$cart_item['scb_slot']])) {
+            $slot = $slots[$cart_item['scb_slot']];
+            $item_data[] = [
+                'name' => 'Session',
+                'value' => date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']
+            ];
+        }
 
         $html = '';
-        foreach ($cart_item['scb_attendees'] as $a) {
-            $html .= esc_html($a['name'] . ' (' . $a['email'] . ')') . '<br>';
+        if (!empty($cart_item['scb_attendees'])) {
+            foreach ($cart_item['scb_attendees'] as $a) {
+                $html .= esc_html($a['name'] . ' (' . $a['email'] . ')') . '<br>';
+            }
         }
 
         $item_data[] = [
@@ -251,6 +317,9 @@ class SCB_Frontend {
         $slots = get_post_meta($item->get_product_id(), '_scb_slots', true);
         $slot  = $slots[$values['scb_slot']];
 
+        $item->add_meta_data('_scb_slot_id', $values['scb_slot']);
+        $item->add_meta_data('_scb_count', intval($values['scb_attendee_count']));
+        
         $item->add_meta_data('Session', date('D j M', strtotime($slot['date'])) . ' @ ' . $slot['time']);
         $item->add_meta_data('Zoom Link', $slot['zoom']);
         $item->add_meta_data('Email Mode', $values['scb_email_send']);
@@ -261,5 +330,86 @@ class SCB_Frontend {
         }
 
         $item->add_meta_data('Attendees', implode(', ', $attendees));
+    }
+
+    /** Display a "Toast" popup for ANY product add (AJAX or Reload) */
+    public function render_success_popup() {
+        // PHP Duplication Check
+        static $printed = false;
+        if ($printed) return;
+        $printed = true;
+
+        $initial_class = isset($_GET['add-to-cart']) ? 'show' : '';
+        ?>
+        
+        <div class="scb-success-toast <?php echo esc_attr($initial_class); ?>">
+            Item added to cart!
+        </div>
+
+        <style>
+            .scb-success-toast {
+                visibility: hidden;
+                min-width: 250px;
+                background-color: #333;
+                color: #fff;
+                text-align: center;
+                border-radius: 4px;
+                padding: 16px;
+                position: fixed;
+                z-index: 2147483647; /* Top of everything */
+                right: 30px;
+                bottom: 30px;
+                font-size: 16px;
+                box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
+                opacity: 0;
+                transition: opacity 0.5s, bottom 0.5s;
+                
+                /* [FIX] Make it non-interactive so clicks pass through */
+                pointer-events: none; 
+                cursor: default;
+            }
+
+            .scb-success-toast.show {
+                visibility: visible;
+                opacity: 1;
+                bottom: 50px;
+            }
+        </style>
+
+        <script>
+        jQuery(function($){
+            var toastClass = '.scb-success-toast';
+            var toastTimer = null;
+
+            // Optional: Remove duplicates from DOM just in case
+            if ($(toastClass).length > 1) {
+                $(toastClass).not(':last').remove();
+            }
+
+            function showToast() {
+                if (toastTimer) clearTimeout(toastTimer);
+                
+                $(toastClass).addClass('show');
+                
+                // Auto-hide after 3 seconds
+                toastTimer = setTimeout(function(){ 
+                    $(toastClass).removeClass('show');
+                }, 3000);
+            }
+
+            // Trigger: AJAX
+            $(document.body).on('added_to_cart', function(event, fragments, cart_hash, button){
+                showToast();
+            });
+
+            // Trigger: Page Load
+            if ($(toastClass).hasClass('show')) {
+                toastTimer = setTimeout(function(){ 
+                    $(toastClass).removeClass('show');
+                }, 3000);
+            }
+        });
+        </script>
+        <?php
     }
 }

@@ -26,7 +26,7 @@ class SCB_Email {
 
     public function render_resend_metabox($post) {
         $url = wp_nonce_url(admin_url('admin-post.php?action=scb_resend_zoom&order=' . $post->ID), 'scb_resend_zoom');
-        echo '<a href="' . $url . '" class="button button-primary">Resend Zoom Instructions</a>';
+        echo '<a href="' . $url . '" class="button button-primary">Resend Teams Instructions</a>';
     }
 
     /** Resend email via admin button */
@@ -96,8 +96,8 @@ class SCB_Email {
 
             <p><strong>Session:</strong><br><?php echo esc_html($session); ?></p>
 
-            <p><strong>Zoom Link:</strong><br>
-                <a href="<?php echo esc_url($zoom); ?>" target="_blank">Join via Zoom</a>
+            <p><strong>Teams Link:</strong><br>
+                <a href="<?php echo esc_url($zoom); ?>" target="_blank">Join via Teams</a>
             </p>
 
             <?php if (!$personalized): ?>
